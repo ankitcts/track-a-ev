@@ -503,13 +503,18 @@ function ResultCard({
   const m: MatchRecord | undefined = search.closestMatch;
   return (
     <div className="card w-full max-w-2xl p-5">
-      <div className="mb-3 flex items-center gap-2">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
         <span className="rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-xs text-emerald-200">
           Saved · checking hourly
         </span>
         <span className="text-xs text-white/40">
           {search.lastInventoryCount ?? 0} vehicles scanned just now
         </span>
+        {search.lastSample && (
+          <span className="rounded-full bg-amber-500/15 px-2.5 py-0.5 text-xs text-amber-200">
+            Sample data — Tesla unreachable from server
+          </span>
+        )}
       </div>
 
       <h2 className="text-lg font-semibold">

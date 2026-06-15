@@ -44,6 +44,18 @@ const config: Config = {
           "0%, 100%": { transform: "translateY(0)", opacity: "0.4" },
           "50%": { transform: "translateY(-3px)", opacity: "1" },
         },
+        limbSwing: {
+          "0%, 100%": { transform: "rotate(20deg)" },
+          "50%": { transform: "rotate(-20deg)" },
+        },
+        bob: {
+          "0%, 100%": { transform: "translateY(0)" },
+          "50%": { transform: "translateY(-4px)" },
+        },
+        shadowPulse: {
+          "0%, 100%": { transform: "scaleX(1)", opacity: "0.35" },
+          "50%": { transform: "scaleX(0.8)", opacity: "0.2" },
+        },
       },
       animation: {
         talk: "talk 0.4s ease-in-out infinite",

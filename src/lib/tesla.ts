@@ -7,6 +7,7 @@
 import {
   MODEL_URL_PATH,
   type Condition,
+  type Financing,
   type MatchRecord,
   type ModelTarget,
   type TeslaModelCode,
@@ -16,6 +17,17 @@ import { estimateMonthlyLease, estimateMonthlyLoan } from "./lease";
 
 const INVENTORY_ENDPOINT =
   "https://www.tesla.com/inventory/api/v4/inventory-results";
+
+// One inventory query for a single model, derived from a tracked search.
+interface InventoryQuery {
+  model: TeslaModelCode;
+  condition: Condition;
+  zip?: string;
+  financing?: Financing;
+  // Per-model monthly cap → Tesla's server-side `paymentRange` filter.
+  maxMonthly?: number;
+  maxPrice?: number;
+}
 
 interface RawListing {
   VIN?: string;
@@ -33,34 +45,75 @@ export interface FetchResult {
   count: number;
   listings: RawListing[];
   error?: string;
+  // True when the listings are illustrative sample data served because Tesla's
+  // live API couldn't be reached (it bot-blocks datacenter IPs with a 403).
+  sample?: boolean;
 }
 
-function buildQueryUrl(
-  model: TeslaModelCode,
-  condition: Condition,
-  zip?: string
-): string {
+// When the live API is unreachable, serve labeled sample inventory so the user
+// gets a working experience instead of a dead end. Disable with
+// TESLA_SAMPLE_FALLBACK=0.
+const SAMPLE_FALLBACK = process.env.TESLA_SAMPLE_FALLBACK !== "0";
+
+function sampleResult(model: TeslaModelCode, error?: string): FetchResult {
+  if (!SAMPLE_FALLBACK) {
+    return { status: "error", count: 0, listings: [], error };
+  }
+  const listings = mockInventory(model);
+  return { status: "ok", count: listings.length, listings, sample: true };
+}
+
+// Map our financing values to Tesla's PaymentType.
+function paymentType(financing?: Financing): string {
+  if (financing === "loan") return "loan";
+  if (financing === "cash") return "cash";
+  return "lease";
+}
+
+// Build the inventory-results URL using the real query shape Tesla's site sends
+// (PaymentType, paymentRange, Year options for used, etc.). Matching this shape
+// is what gets a 200 instead of an error.
+function buildQueryUrl(q: InventoryQuery): string {
+  const condition = q.condition === "any" ? "new" : q.condition;
+  const ptype = paymentType(q.financing);
+
+  const inner: Record<string, unknown> = {
+    model: q.model,
+    condition,
+    options:
+      condition === "used"
+        ? { Year: yearRange() }
+        : {},
+    arrangeby: condition === "used" ? "Odometer" : "Price",
+    order: "asc",
+    market: "US",
+    language: "en",
+    super_region: "north america",
+    PaymentType: ptype,
+    zip: q.zip || "94043",
+    range: 200,
+  };
+
+  // Server-side payment filter (e.g. "0,300" for "≤ $300/mo").
+  if (ptype !== "cash" && q.maxMonthly) inner.paymentRange = `0,${q.maxMonthly}`;
+
   const query = {
-    query: {
-      model,
-      condition: condition === "any" ? "new" : condition,
-      options: {},
-      arrangeby: "Price",
-      order: "asc",
-      market: "US",
-      language: "en",
-      super_region: "north america",
-      zip: zip || "94043",
-      range: 200,
-    },
+    query: inner,
     offset: 0,
     count: 50,
     outsideOffset: 0,
     outsideSearch: false,
+    isFalconDeliverySelectionEnabled: false,
+    version: null,
   };
-  return `${INVENTORY_ENDPOINT}?query=${encodeURIComponent(
-    JSON.stringify(query)
-  )}`;
+  return `${INVENTORY_ENDPOINT}?query=${encodeURIComponent(JSON.stringify(query))}`;
+}
+
+function yearRange(): number[] {
+  const now = new Date().getFullYear();
+  const years: number[] = [];
+  for (let y = 2018; y <= now + 1; y++) years.push(y);
+  return years;
 }
 
 // Deterministic sample inventory for demos / offline dev / when Tesla's
@@ -81,55 +134,110 @@ function mockInventory(model: TeslaModelCode): RawListing[] {
   return base[model];
 }
 
-export async function fetchInventory(
-  model: TeslaModelCode,
-  condition: Condition,
-  zip?: string
-): Promise<FetchResult> {
-  if (process.env.TESLA_MOCK === "1") {
-    const listings = mockInventory(model);
-    return { status: listings.length ? "ok" : "no-results", count: listings.length, listings };
-  }
+const BROWSER_HEADERS: Record<string, string> = {
+  "User-Agent":
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+  "Accept-Language": "en-US,en;q=0.9",
+  "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not.A/Brand";v="99"',
+  "sec-ch-ua-mobile": "?0",
+  "sec-ch-ua-platform": '"macOS"',
+};
+
+// Primary source: the JSON API behind tesla.com/inventory.
+async function tryApiInventory(q: InventoryQuery): Promise<FetchResult> {
   try {
-    const res = await fetch(buildQueryUrl(model, condition, zip), {
+    const res = await fetch(buildQueryUrl(q), {
       headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Safari/537.36",
+        ...BROWSER_HEADERS,
         Accept: "application/json, text/plain, */*",
-        "Accept-Language": "en-US,en;q=0.9",
+        Referer: `https://www.tesla.com/inventory/${q.condition === "any" ? "new" : q.condition}/${q.model}`,
+        Origin: "https://www.tesla.com",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
       },
-      // Don't let a slow/blocked request hang the poller.
       signal: AbortSignal.timeout(15000),
       cache: "no-store",
     });
-    if (!res.ok) {
-      return {
-        status: "error",
-        count: 0,
-        listings: [],
-        error: `Tesla API responded ${res.status}`,
-      };
-    }
+    if (!res.ok) return { status: "error", count: 0, listings: [], error: `Tesla API responded ${res.status}` };
     const data = (await res.json()) as { results?: RawListing[] | { exact?: RawListing[] } };
-    // The API has returned results under a few shapes over time.
     let listings: RawListing[] = [];
     if (Array.isArray(data.results)) listings = data.results;
     else if (data.results && Array.isArray((data.results as { exact?: RawListing[] }).exact))
       listings = (data.results as { exact: RawListing[] }).exact;
-
-    return {
-      status: listings.length ? "ok" : "no-results",
-      count: listings.length,
-      listings,
-    };
+    return { status: listings.length ? "ok" : "no-results", count: listings.length, listings };
   } catch (err) {
-    return {
-      status: "error",
-      count: 0,
-      listings: [],
-      error: err instanceof Error ? err.message : String(err),
-    };
+    return { status: "error", count: 0, listings: [], error: err instanceof Error ? err.message : String(err) };
   }
+}
+
+// Secondary source: scrape the public inventory webpage and pull listings out
+// of the JSON the page embeds (e.g. __NEXT_DATA__ / application/json islands).
+async function tryHtmlInventory(q: InventoryQuery): Promise<FetchResult> {
+  try {
+    const cond = q.condition === "any" ? "new" : q.condition;
+    const url = `https://www.tesla.com/inventory/${cond}/${q.model}?zip=${q.zip || "94043"}`;
+    const res = await fetch(url, {
+      headers: { ...BROWSER_HEADERS, Accept: "text/html,application/xhtml+xml" },
+      signal: AbortSignal.timeout(15000),
+      cache: "no-store",
+    });
+    if (!res.ok) return { status: "error", count: 0, listings: [], error: `Tesla page responded ${res.status}` };
+    const html = await res.text();
+    const listings = extractListingsFromHtml(html);
+    return { status: listings.length ? "ok" : "no-results", count: listings.length, listings };
+  } catch (err) {
+    return { status: "error", count: 0, listings: [], error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+// Pull every object that looks like an inventory listing (has a 17-char VIN) out
+// of the JSON blobs embedded in the page's <script> tags.
+function extractListingsFromHtml(html: string): RawListing[] {
+  const found: RawListing[] = [];
+  const seen = new Set<string>();
+  const collect = (node: unknown) => {
+    if (Array.isArray(node)) {
+      node.forEach(collect);
+    } else if (node && typeof node === "object") {
+      const obj = node as Record<string, unknown>;
+      if (typeof obj.VIN === "string" && /^[A-HJ-NPR-Z0-9]{17}$/.test(obj.VIN) && !seen.has(obj.VIN)) {
+        seen.add(obj.VIN);
+        found.push(obj as RawListing);
+      }
+      Object.values(obj).forEach(collect);
+    }
+  };
+  const scriptRe = /<script[^>]*type="application\/json"[^>]*>([\s\S]*?)<\/script>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = scriptRe.exec(html))) {
+    try {
+      collect(JSON.parse(m[1]));
+    } catch {
+      /* not parseable JSON — skip */
+    }
+  }
+  return found;
+}
+
+export async function fetchInventory(q: InventoryQuery): Promise<FetchResult> {
+  if (process.env.TESLA_MOCK === "1") {
+    const listings = mockInventory(q.model);
+    return { status: listings.length ? "ok" : "no-results", count: listings.length, listings };
+  }
+
+  // 1) JSON API → 2) scrape the inventory webpage → 3) labeled sample fallback.
+  const api = await tryApiInventory(q);
+  if (api.status === "ok") return api;
+
+  const page = await tryHtmlInventory(q);
+  if (page.status === "ok") return page;
+
+  if (api.status === "no-results" || page.status === "no-results") {
+    return { status: "no-results", count: 0, listings: [] };
+  }
+  // Both blocked/unreachable (typically 403 on cloud IPs) — serve sample data.
+  return sampleResult(q.model, api.error || page.error);
 }
 
 function listingPrice(l: RawListing): number {
@@ -151,7 +259,8 @@ function orderUrl(model: TeslaModelCode, vin: string): string {
 function scoreListing(
   listing: RawListing,
   target: ModelTarget,
-  search: TrackedSearch
+  search: TrackedSearch,
+  sample = false
 ): MatchRecord {
   const price = listingPrice(listing);
   const vin = listing.VIN || "UNKNOWN";
@@ -210,8 +319,12 @@ function scoreListing(
     estimatedMonthly,
     score,
     isMatch,
-    orderUrl: orderUrl(target.model, vin),
+    // For sample data, link to the real inventory page (the VIN isn't real).
+    orderUrl: sample
+      ? `https://www.tesla.com/inventory/new/${target.model}`
+      : orderUrl(target.model, vin),
     reason,
+    sample,
     foundAt: new Date().toISOString(),
   };
 }
@@ -222,6 +335,8 @@ export interface EvaluateResult {
   matches: MatchRecord[];
   closest?: MatchRecord;
   error?: string;
+  // True when results came from labeled sample data (Tesla unreachable).
+  sample?: boolean;
 }
 
 // Fetch inventory for every model target in a search and evaluate matches.
@@ -231,18 +346,23 @@ export async function evaluateSearch(
   let inventoryCount = 0;
   let allRecords: MatchRecord[] = [];
   const errors: string[] = [];
+  let sample = false;
 
   for (const target of search.models) {
-    const result = await fetchInventory(
-      target.model,
-      search.condition,
-      search.zip
-    );
+    const result = await fetchInventory({
+      model: target.model,
+      condition: search.condition,
+      zip: search.zip,
+      financing: search.financing,
+      maxMonthly: target.maxMonthly,
+      maxPrice: target.maxPrice,
+    });
     if (result.status === "error" && result.error) errors.push(result.error);
+    if (result.sample) sample = true;
     inventoryCount += result.count;
     for (const listing of result.listings) {
       if (!listingPrice(listing)) continue;
-      allRecords.push(scoreListing(listing, target, search));
+      allRecords.push(scoreListing(listing, target, search, result.sample));
     }
   }
 
@@ -263,5 +383,6 @@ export async function evaluateSearch(
     matches,
     closest,
     error: errors[0],
+    sample,
   };
 }

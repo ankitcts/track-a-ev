@@ -2,26 +2,35 @@
 
 import { useEffect, useRef, useState } from "react";
 
-// A Tesla-bot ("Optimus"-style transformer) avatar. Dependency-free SVG with
-// rich, state-driven animation plus cursor-tracking eyes for interactivity.
+// A full-body Tesla-bot ("Optimus"-style) that actually walks: swinging arms and
+// legs, a bobbing torso, cursor-tracking eyes, blinking, and per-state reactions.
+// Dependency-free inline SVG + Tailwind keyframes.
 //
 // States:
-//  - "idle":      gentle breathing, periodic blink, eyes follow the cursor
-//  - "listening": cyan energy rings + scanning eyes + glowing antenna
-//  - "thinking":  amber eyes look up, animated thought dots
+//  - "idle":      slow walk-in-place + breathing, eyes follow the cursor
+//  - "listening": brisk gait, cyan energy rings, glowing antenna/pods
+//  - "thinking":  measured gait, amber eyes look up + thought dots
 //  - "speaking":  green visor + animated voice-equalizer mouth
 export type AvatarState = "idle" | "listening" | "thinking" | "speaking";
 
 const EYE_COLORS: Record<AvatarState, string> = {
-  idle: "#38bdf8", // sky
-  listening: "#22d3ee", // cyan
-  thinking: "#fbbf24", // amber
-  speaking: "#34d399", // emerald
+  idle: "#38bdf8",
+  listening: "#22d3ee",
+  thinking: "#fbbf24",
+  speaking: "#34d399",
+};
+
+// Walk-cycle seconds per state (smaller = faster gait).
+const CYCLE: Record<AvatarState, number> = {
+  idle: 1.7,
+  listening: 0.8,
+  thinking: 1.2,
+  speaking: 1.0,
 };
 
 export default function Avatar({
   state = "idle",
-  size = 200,
+  size = 190,
   onClick,
 }: {
   state?: AvatarState;
@@ -33,37 +42,56 @@ export default function Avatar({
   const [pupil, setPupil] = useState({ x: 0, y: 0 });
   const color = EYE_COLORS[state];
   const active = state !== "idle";
+  const cycle = CYCLE[state];
 
-  // Eyes track the cursor (clamped to a small range) for "alive" interactivity.
   function onMove(e: React.MouseEvent) {
     const el = ref.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
-    const cx = r.left + r.width / 2;
-    const cy = r.top + r.height / 2;
-    const dx = (e.clientX - cx) / (r.width / 2);
-    const dy = (e.clientY - cy) / (r.height / 2);
+    const dx = (e.clientX - (r.left + r.width / 2)) / (r.width / 2);
+    const dy = (e.clientY - (r.top + r.height / 2)) / (r.height / 2);
     const clamp = (v: number) => Math.max(-1, Math.min(1, v));
     setPupil({ x: clamp(dx) * 3, y: clamp(dy) * 2.5 });
   }
 
-  // While thinking, the bot looks up-left as if pondering.
   useEffect(() => {
     if (state === "thinking") setPupil({ x: -2, y: -2.5 });
   }, [state]);
 
   const pupilStyle = {
-    transform: `translate(${state === "listening" ? 0 : pupil.x}px, ${pupil.y}px)`,
+    transform: `translate(${pupil.x}px, ${pupil.y}px)`,
     transition: "transform 0.12s ease-out",
   } as const;
+
+  // Limb gait helpers. Opposite phase via a negative half-cycle delay.
+  const limb = (phaseOffset: boolean) => ({
+    transformBox: "fill-box" as const,
+    transformOrigin: "center top",
+    animationName: "limbSwing",
+    animationTimingFunction: "ease-in-out",
+    animationIterationCount: "infinite" as const,
+    animationDuration: `${cycle}s`,
+    animationDelay: `${phaseOffset ? -cycle / 2 : 0}s`,
+  });
+  const bobStyle = {
+    transformBox: "fill-box" as const,
+    transformOrigin: "center",
+    animationName: "bob",
+    animationTimingFunction: "ease-in-out",
+    animationIterationCount: "infinite" as const,
+    animationDuration: `${cycle / 2}s`,
+  } as const;
+
+  const width = size;
+  const height = size * (300 / 180);
 
   return (
     <div
       ref={ref}
       className={`relative grid place-items-center ${
-        interactive ? "cursor-pointer select-none transition hover:scale-[1.04] active:scale-95" : ""
+        interactive ? "cursor-pointer select-none transition hover:scale-[1.03] active:scale-95" : ""
       }`}
-      style={{ width: size, height: size }}
+      style={{ width, height }}
       role={interactive ? "button" : undefined}
       tabIndex={interactive ? 0 : undefined}
       aria-label={`Assistant ${state}`}
@@ -87,32 +115,16 @@ export default function Avatar({
         <>
           <span
             className="absolute rounded-full border-2 animate-pulseRing"
-            style={{ width: size * 0.8, height: size * 0.8, borderColor: color }}
+            style={{ width: width * 0.7, height: width * 0.7, borderColor: color }}
           />
           <span
             className="absolute rounded-full border animate-pulseRing"
-            style={{ width: size * 0.8, height: size * 0.8, borderColor: color, animationDelay: "0.6s" }}
+            style={{ width: width * 0.7, height: width * 0.7, borderColor: color, animationDelay: "0.6s" }}
           />
         </>
       )}
 
-      {/* Rotating tech halo behind the bot */}
-      <span
-        className={`absolute rounded-full border border-dashed ${active ? "animate-spinSlow" : ""}`}
-        style={{
-          width: size * 0.92,
-          height: size * 0.92,
-          borderColor: `${color}55`,
-          opacity: active ? 0.8 : 0.35,
-        }}
-      />
-
-      <svg
-        viewBox="0 0 200 210"
-        width={size}
-        height={size}
-        className={state === "idle" ? "animate-breathe" : ""}
-      >
+      <svg viewBox="0 0 180 300" width={width} height={height}>
         <defs>
           <linearGradient id="metal" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="#eef2f8" />
@@ -128,7 +140,7 @@ export default function Avatar({
             <stop offset="100%" stopColor="#05070c" />
           </radialGradient>
           <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
-            <feGaussianBlur stdDeviation="2.4" result="b" />
+            <feGaussianBlur stdDeviation="2.2" result="b" />
             <feMerge>
               <feMergeNode in="b" />
               <feMergeNode in="SourceGraphic" />
@@ -136,103 +148,143 @@ export default function Avatar({
           </filter>
         </defs>
 
-        {/* ---- Shoulders / torso ---- */}
-        <g style={{ animation: "assemble 0.6s 0.05s cubic-bezier(0.22,1,0.36,1) both" }}>
-          <path
-            d="M40 205 Q40 158 100 158 Q160 158 160 205 Z"
-            fill="url(#metal)"
-            stroke="#6b7486"
-            strokeWidth="1.5"
-          />
-          {/* chest plate */}
-          <rect x="78" y="168" width="44" height="34" rx="8" fill="url(#metalDark)" />
-          {/* Tesla "T" emblem */}
-          <g filter="url(#glow)">
-            <path d="M100 174 v22 M92 176 h16" stroke={color} strokeWidth="3" strokeLinecap="round" />
+        {/* ground shadow */}
+        <ellipse
+          cx="90"
+          cy="290"
+          rx="46"
+          ry="7"
+          fill="#000"
+          className="animate-shadowPulse"
+          style={{ transformBox: "fill-box", transformOrigin: "center", animationDuration: `${cycle / 2}s` }}
+        />
+
+        {/* ---- LEGS (planted, swinging from hips; not bobbed) ---- */}
+        {/* left leg */}
+        <g transform="translate(76,176)">
+          <g style={limb(false)}>
+            <Leg color={color} />
+          </g>
+        </g>
+        {/* right leg (opposite phase) */}
+        <g transform="translate(104,176)">
+          <g style={limb(true)}>
+            <Leg color={color} />
           </g>
         </g>
 
-        {/* ---- Neck ---- */}
-        <rect x="90" y="146" width="20" height="16" rx="5" fill="url(#metalDark)" />
+        {/* ---- UPPER BODY (bobs with the gait) ---- */}
+        <g style={bobStyle}>
+          {/* arms (behind torso), opposite phase to same-side leg */}
+          <g transform="translate(64,108)">
+            <g style={limb(true)}>
+              <Arm color={color} />
+            </g>
+          </g>
+          <g transform="translate(116,108)">
+            <g style={limb(false)}>
+              <Arm color={color} />
+            </g>
+          </g>
 
-        {/* ---- Antenna ---- */}
-        <g style={{ animation: "assemble 0.6s 0.2s cubic-bezier(0.22,1,0.36,1) both" }}>
-          <line x1="100" y1="34" x2="100" y2="18" stroke="#8a94a6" strokeWidth="2.5" />
-          <circle
-            cx="100"
-            cy="14"
-            r="4.5"
-            fill={color}
-            filter="url(#glow)"
-            className={active ? "animate-glowPulse" : ""}
-          />
-        </g>
+          {/* torso */}
+          <rect x="62" y="100" width="56" height="80" rx="16" fill="url(#metal)" stroke="#6b7486" strokeWidth="1.5" />
+          <rect x="74" y="116" width="32" height="40" rx="8" fill="url(#metalDark)" />
+          {/* chest Tesla "T" */}
+          <g filter="url(#glow)">
+            <path d="M90 122 v26 M80 124 h20" stroke={color} strokeWidth="3" strokeLinecap="round" />
+          </g>
+          {/* hip plate */}
+          <rect x="68" y="168" width="44" height="16" rx="6" fill="url(#metalDark)" />
 
-        {/* ---- Head ---- */}
-        <g style={{ animation: "assemble 0.6s 0.12s cubic-bezier(0.22,1,0.36,1) both" }}>
-          {/* side audio pods */}
-          <rect x="40" y="74" width="14" height="34" rx="6" fill="url(#metalDark)" />
-          <rect x="146" y="74" width="14" height="34" rx="6" fill="url(#metalDark)" />
-          <circle cx="47" cy="91" r="3" fill={color} className={active ? "animate-glowPulse" : ""} />
-          <circle cx="153" cy="91" r="3" fill={color} className={active ? "animate-glowPulse" : ""} />
+          {/* neck */}
+          <rect x="82" y="86" width="16" height="16" rx="5" fill="url(#metalDark)" />
 
+          {/* antenna */}
+          <line x1="90" y1="30" x2="90" y2="16" stroke="#8a94a6" strokeWidth="2.5" />
+          <circle cx="90" cy="12" r="4" fill={color} filter="url(#glow)" className={active ? "animate-glowPulse" : ""} />
+
+          {/* head */}
+          {/* audio pods */}
+          <rect x="40" y="50" width="12" height="28" rx="5" fill="url(#metalDark)" />
+          <rect x="128" y="50" width="12" height="28" rx="5" fill="url(#metalDark)" />
+          <circle cx="46" cy="64" r="2.6" fill={color} className={active ? "animate-glowPulse" : ""} />
+          <circle cx="134" cy="64" r="2.6" fill={color} className={active ? "animate-glowPulse" : ""} />
           {/* helmet */}
           <path
-            d="M54 92 Q54 38 100 38 Q146 38 146 92 L146 110 Q146 140 100 140 Q54 140 54 110 Z"
+            d="M52 64 Q52 26 90 26 Q128 26 128 64 L128 78 Q128 100 90 100 Q52 100 52 78 Z"
             fill="url(#metal)"
             stroke="#6b7486"
             strokeWidth="1.5"
           />
-          {/* forehead light strip */}
-          <rect x="86" y="48" width="28" height="5" rx="2.5" fill={color} opacity="0.85" filter="url(#glow)" />
-
+          {/* forehead strip */}
+          <rect x="78" y="36" width="24" height="4" rx="2" fill={color} opacity="0.85" filter="url(#glow)" />
           {/* visor */}
           <path
-            d="M62 74 Q62 60 78 60 L122 60 Q138 60 138 74 L138 104 Q138 120 122 120 L78 120 Q62 120 62 104 Z"
+            d="M58 52 Q58 42 70 42 L110 42 Q122 42 122 52 L122 76 Q122 90 110 90 L70 90 Q58 90 58 76 Z"
             fill="url(#visor)"
             stroke="#2a3140"
             strokeWidth="2"
           />
-
           {/* eyes */}
-          <g className="animate-blink" style={{ transformOrigin: "100px 90px" }}>
+          <g className="animate-blink" style={{ transformBox: "fill-box", transformOrigin: "center" }}>
             <g filter="url(#glow)">
-              {/* left eye */}
               <g style={pupilStyle}>
-                <rect x="78" y="82" width="16" height="16" rx="6" fill={color} />
+                <rect x="70" y="58" width="14" height="14" rx="5" fill={color} />
               </g>
-              {/* right eye */}
               <g style={pupilStyle}>
-                <rect x="106" y="82" width="16" height="16" rx="6" fill={color} />
+                <rect x="96" y="58" width="14" height="14" rx="5" fill={color} />
               </g>
             </g>
           </g>
-
           {/* mouth / voice */}
-          <MouthSVG state={state} color={color} />
+          <Mouth state={state} color={color} />
         </g>
       </svg>
 
-      {/* state caption */}
-      <span className="absolute -bottom-1 rounded-full bg-black/50 px-2 py-0.5 text-[10px] uppercase tracking-wider text-white/70">
-        {state}
+      <span className="absolute bottom-0 rounded-full bg-black/50 px-2 py-0.5 text-[10px] uppercase tracking-wider text-white/70">
+        {state === "idle" ? "tap to talk" : state}
       </span>
     </div>
   );
 }
 
-function MouthSVG({ state, color }: { state: AvatarState; color: string }) {
+function Leg({ color }: { color: string }) {
+  return (
+    <g>
+      <rect x="-8" y="0" width="16" height="92" rx="8" fill="url(#metal)" stroke="#6b7486" strokeWidth="1.2" />
+      {/* knee accent */}
+      <rect x="-8" y="44" width="16" height="6" rx="3" fill={color} opacity="0.55" />
+      {/* foot */}
+      <path d="M-10 88 L16 88 Q20 88 20 92 L20 98 Q20 100 18 100 L-10 100 Q-12 100 -12 98 Z" fill="url(#metalDark)" />
+    </g>
+  );
+}
+
+function Arm({ color }: { color: string }) {
+  return (
+    <g>
+      <rect x="-6" y="0" width="12" height="74" rx="6" fill="url(#metal)" stroke="#6b7486" strokeWidth="1.2" />
+      {/* elbow accent */}
+      <rect x="-6" y="36" width="12" height="5" rx="2.5" fill={color} opacity="0.55" />
+      {/* hand */}
+      <circle cx="0" cy="78" r="7" fill="url(#metalDark)" />
+    </g>
+  );
+}
+
+function Mouth({ state, color }: { state: AvatarState; color: string }) {
   if (state === "speaking") {
     return (
-      <g transform="translate(82,126)">
+      <g transform="translate(74,82)">
         {[0, 1, 2, 3, 4].map((i) => (
           <rect
             key={i}
-            x={i * 9}
-            y={-7}
-            width="5"
-            height="14"
-            rx="2.5"
+            x={i * 8}
+            y={-6}
+            width="4.5"
+            height="12"
+            rx="2.2"
             fill={color}
             className="animate-talk"
             style={{ transformOrigin: "center", animationDelay: `${i * 0.08}s` }}
@@ -243,13 +295,13 @@ function MouthSVG({ state, color }: { state: AvatarState; color: string }) {
   }
   if (state === "thinking") {
     return (
-      <g transform="translate(86,128)">
+      <g transform="translate(78,84)">
         {[0, 1, 2].map((i) => (
           <circle
             key={i}
-            cx={i * 14}
+            cx={i * 12}
             cy={0}
-            r="3"
+            r="2.6"
             fill={color}
             className="animate-dotPulse"
             style={{ animationDelay: `${i * 0.18}s` }}
@@ -258,14 +310,13 @@ function MouthSVG({ state, color }: { state: AvatarState; color: string }) {
       </g>
     );
   }
-  // idle / listening: a calm glowing bar
   return (
     <rect
-      x={state === "listening" ? 86 : 88}
-      y={126}
-      width={state === "listening" ? 28 : 24}
-      height="4"
-      rx="2"
+      x={state === "listening" ? 78 : 80}
+      y={82}
+      width={state === "listening" ? 24 : 20}
+      height="3.5"
+      rx="1.8"
       fill={color}
       opacity="0.8"
       className={state === "listening" ? "animate-scanX" : ""}
