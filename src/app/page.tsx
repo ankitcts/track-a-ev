@@ -221,16 +221,26 @@ export default function AssistantPage() {
     }
   }
 
-  async function startConversation() {
+  // Start a fresh conversation, clearing prior history. Only used when the
+  // user explicitly begins a new search.
+  async function beginNewConversation() {
     setResult(null);
     setError(null);
-    setMessages([]);
     setCriteria(null);
     transcriptRef.current = "";
     conversingRef.current = true;
     setConversing(true);
     setMessages([{ role: "assistant", text: GREETING }]);
     await say(GREETING);
+    if (micSupported) voiceLoop();
+  }
+
+  // Resume an existing conversation WITHOUT clearing history (e.g. after a
+  // pause, or to refine the criteria after a result).
+  async function resumeConversation() {
+    setError(null);
+    conversingRef.current = true;
+    setConversing(true);
     if (micSupported) voiceLoop();
   }
 
@@ -242,17 +252,13 @@ export default function AssistantPage() {
     setAvatarState("idle");
   }
 
-  // Typed turn (works with or without a mic).
+  // Typed turn (works with or without a mic). Never clears existing history —
+  // a typed message continues the current conversation (or starts one if none).
   async function submitText() {
     const value = text.trim();
     if (!value || thinking) return;
     setText("");
     if (!conversingRef.current) {
-      // Start a (text-driven) conversation seeded with this first turn.
-      setResult(null);
-      setError(null);
-      setMessages([]);
-      transcriptRef.current = "";
       conversingRef.current = true;
       setConversing(true);
     }
@@ -261,7 +267,8 @@ export default function AssistantPage() {
 
   function onAvatarClick() {
     if (conversing) stopConversation();
-    else startConversation();
+    else if (messages.length > 0) resumeConversation();
+    else beginNewConversation();
   }
 
   // --- evaluation + approval ---------------------------------------------
@@ -329,18 +336,22 @@ export default function AssistantPage() {
           about anything you skip, and start the search as soon as we&apos;re done.
         </p>
         <div className="mt-1 flex gap-2">
-          {!conversing ? (
-            <button onClick={startConversation} className="btn-primary">
-              {micSupported ? "Start conversation" : "Start (type below)"}
+          {conversing ? (
+            <button onClick={stopConversation} className="btn-ghost">
+              Pause
+            </button>
+          ) : messages.length > 0 ? (
+            <button onClick={resumeConversation} className="btn-primary">
+              {micSupported ? "Resume talking" : "Resume (type below)"}
             </button>
           ) : (
-            <button onClick={stopConversation} className="btn-ghost">
-              Stop
+            <button onClick={beginNewConversation} className="btn-primary">
+              {micSupported ? "Start conversation" : "Start (type below)"}
             </button>
           )}
           {(messages.length > 0 || result) && (
             <button onClick={reset} className="btn-ghost">
-              Reset
+              New search
             </button>
           )}
         </div>
@@ -381,10 +392,10 @@ export default function AssistantPage() {
       )}
 
       {/* Live understanding of the criteria as the conversation progresses */}
-      {criteria && !result && <CriteriaChips criteria={criteria} />}
+      {criteria && <CriteriaChips criteria={criteria} />}
 
-      {/* Text input — always available as a fallback / supplement */}
-      {!result && (
+      {/* Text input — always available; lets the user refine after a result too */}
+      {(
         <div className="card w-full max-w-2xl p-4">
           <div className="flex items-center gap-2">
             <input
