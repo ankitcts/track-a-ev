@@ -134,6 +134,19 @@ function mockInventory(model: TeslaModelCode): RawListing[] {
   return base[model];
 }
 
+// Optional egress proxy so live Tesla requests can originate from a residential
+// IP (Tesla 403s datacenter/cloud IPs, so this is what enables live data on
+// Vercel). Set TESLA_PROXY_URL to a scraping-proxy endpoint. Two forms:
+//   - placeholder:  https://proxy.example/?key=K&url={url}
+//   - prefix:       https://api.scraperapi.com/?api_key=K&url=
+// The target URL is URL-encoded into the placeholder, or appended for a prefix.
+function proxied(url: string): string {
+  const p = process.env.TESLA_PROXY_URL;
+  if (!p) return url;
+  if (p.includes("{url}")) return p.replace("{url}", encodeURIComponent(url));
+  return p + encodeURIComponent(url);
+}
+
 const BROWSER_HEADERS: Record<string, string> = {
   "User-Agent":
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -146,7 +159,7 @@ const BROWSER_HEADERS: Record<string, string> = {
 // Primary source: the JSON API behind tesla.com/inventory.
 async function tryApiInventory(q: InventoryQuery): Promise<FetchResult> {
   try {
-    const res = await fetch(buildQueryUrl(q), {
+    const res = await fetch(proxied(buildQueryUrl(q)), {
       headers: {
         ...BROWSER_HEADERS,
         Accept: "application/json, text/plain, */*",
@@ -177,7 +190,7 @@ async function tryHtmlInventory(q: InventoryQuery): Promise<FetchResult> {
   try {
     const cond = q.condition === "any" ? "new" : q.condition;
     const url = `https://www.tesla.com/inventory/${cond}/${q.model}?zip=${q.zip || "94043"}`;
-    const res = await fetch(url, {
+    const res = await fetch(proxied(url), {
       headers: { ...BROWSER_HEADERS, Accept: "text/html,application/xhtml+xml" },
       signal: AbortSignal.timeout(15000),
       cache: "no-store",

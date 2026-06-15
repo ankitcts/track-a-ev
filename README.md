@@ -113,6 +113,12 @@ Tracked searches are saved so they're still there when you refresh. The store
 - The Tesla inventory endpoint is **unofficial/undocumented** and may change,
   rate-limit, or geo-block. The poller treats failures gracefully and records
   them on the dashboard.
+- Tesla **403s datacenter/cloud IPs** (so on Vercel you'll see labeled *sample
+  data* by default). To get **live** data there, set **`TESLA_PROXY_URL`** to a
+  residential scraping-proxy endpoint (see `.env.example`); requests are routed
+  through it. The query already matches Tesla's real shape, including
+  `PaymentType` + server-side `paymentRange`, so lease-payment filtering happens
+  on Tesla's side when reachable.
 - **Lease/loan monthly figures are estimates** (Tesla's API doesn't expose a
   reliable quote). The real number is confirmed on the Tesla order page at
   approval time.
