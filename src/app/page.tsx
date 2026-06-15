@@ -501,6 +501,7 @@ function ResultCard({
   onReset: () => void;
 }) {
   const m: MatchRecord | undefined = search.closestMatch;
+  const [detail, setDetail] = useState<MatchRecord | null>(null);
   return (
     <div className="card w-full max-w-2xl p-5">
       <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -536,19 +537,16 @@ function ResultCard({
               </div>
               <div className="mt-1 text-sm text-white/60">
                 ${m.price.toLocaleString()}
-                {m.estimatedMonthly != null && <> · ~${m.estimatedMonthly}/mo (est.)</>}
+                {m.estimatedMonthly != null && (
+                  <> · ${m.estimatedMonthly}/mo {m.monthlyIsReal ? "(Tesla)" : "(est.)"}</>
+                )}
               </div>
               <div className="mt-1 text-xs text-white/40">{m.reason}</div>
             </div>
             <div className="flex items-center gap-2">
-              <a
-                href={m.orderUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn-ghost px-3 py-1.5 text-sm"
-              >
-                View on Tesla
-              </a>
+              <button onClick={() => setDetail(m)} className="btn-ghost px-3 py-1.5 text-sm">
+                View Tesla
+              </button>
               {m.isMatch && (
                 <button
                   onClick={() => onApprove(search.id, m.vin)}
@@ -575,6 +573,119 @@ function ResultCard({
         <button onClick={onReset} className="btn-ghost">
           New search
         </button>
+      </div>
+
+      {detail && (
+        <TeslaDetail
+          match={detail}
+          sample={!!search.lastSample}
+          financing={search.financing}
+          onApprove={() => onApprove(search.id, detail.vin)}
+          onClose={() => setDetail(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// In-app "Tesla view" — vehicle detail without leaving the app.
+function TeslaDetail({
+  match,
+  sample,
+  financing,
+  onApprove,
+  onClose,
+}: {
+  match: MatchRecord;
+  sample: boolean;
+  financing: string;
+  onApprove: () => void;
+  onClose: () => void;
+}) {
+  const specs: { label: string; value: string }[] = [
+    { label: "Model", value: `${MODEL_LABELS[match.model]} ${match.trimName}`.trim() },
+    ...(match.year ? [{ label: "Year", value: String(match.year) }] : []),
+    { label: "Price", value: `$${match.price.toLocaleString()}` },
+    ...(match.estimatedMonthly != null
+      ? [
+          {
+            label: `${financing} / mo`,
+            value: `$${match.estimatedMonthly} ${match.monthlyIsReal ? "(Tesla quote)" : "(estimated)"}`,
+          },
+        ]
+      : []),
+    ...(match.rangeMi ? [{ label: "Range", value: `${match.rangeMi} mi` }] : []),
+    ...(match.odometer ? [{ label: "Odometer", value: `${match.odometer.toLocaleString()} mi` }] : []),
+    { label: "VIN", value: match.vin },
+  ];
+
+  return (
+    <div
+      className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+    >
+      <div
+        className="card w-full max-w-lg p-5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-semibold">
+              {MODEL_LABELS[match.model]} {match.trimName}
+            </h3>
+            <p className="text-sm text-white/50">
+              {match.isMatch ? "Meets your criteria" : match.reason}
+            </p>
+          </div>
+          <button onClick={onClose} className="rounded-lg px-2 py-1 text-white/50 hover:bg-white/10">
+            ✕
+          </button>
+        </div>
+
+        {/* stylized vehicle silhouette (no external image dependency) */}
+        <div className="mt-4 grid h-36 place-items-center rounded-xl border border-white/10 bg-gradient-to-b from-white/5 to-transparent">
+          <svg viewBox="0 0 200 70" className="h-24 w-56 text-white/70">
+            <path
+              d="M15 50 Q20 50 24 46 L40 34 Q46 30 56 29 L120 27 Q140 27 152 36 L172 44 Q184 46 186 50 L186 54 Q186 56 184 56 L18 56 Q15 56 15 54 Z"
+              fill="currentColor"
+              opacity="0.85"
+            />
+            <circle cx="56" cy="56" r="9" fill="#0b0f1a" stroke="currentColor" strokeWidth="3" />
+            <circle cx="150" cy="56" r="9" fill="#0b0f1a" stroke="currentColor" strokeWidth="3" />
+          </svg>
+        </div>
+
+        {sample && (
+          <p className="mt-3 rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+            Sample data — Tesla inventory couldn&apos;t be reached from the server (it blocks
+            datacenter IPs). With a configured proxy / residential IP these are live listings.
+          </p>
+        )}
+
+        <dl className="mt-4 grid grid-cols-2 gap-2 text-sm">
+          {specs.map((s) => (
+            <div key={s.label} className="rounded-lg border border-white/10 bg-black/20 px-3 py-2">
+              <dt className="text-[11px] uppercase tracking-wider text-white/40">{s.label}</dt>
+              <dd className="truncate capitalize">{s.value}</dd>
+            </div>
+          ))}
+        </dl>
+
+        <div className="mt-5 flex gap-2">
+          {match.isMatch && (
+            <button onClick={onApprove} className="btn-primary">
+              Approve &amp; buy
+            </button>
+          )}
+          <a href={match.orderUrl} target="_blank" rel="noopener noreferrer" className="btn-ghost">
+            Open on Tesla.com ↗
+          </a>
+          <button onClick={onClose} className="btn-ghost ml-auto">
+            Close
+          </button>
+        </div>
       </div>
     </div>
   );
