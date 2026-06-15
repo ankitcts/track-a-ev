@@ -38,7 +38,15 @@ export interface MatchRecord {
   model: TeslaModelCode;
   trimName: string;
   price: number;
+  // Monthly payment used for matching. From Tesla's real quote when available,
+  // otherwise an estimate (see monthlyIsReal).
   estimatedMonthly: number | null;
+  // True when estimatedMonthly came from Tesla's listing (not our estimate).
+  monthlyIsReal?: boolean;
+  // Extra detail surfaced in the in-app "Tesla view".
+  year?: number;
+  odometer?: number;
+  rangeMi?: number;
   // 0..1 — how well this listing matched the criteria (1 = full match).
   score: number;
   isMatch: boolean;

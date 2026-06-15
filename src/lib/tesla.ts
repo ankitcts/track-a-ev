@@ -118,20 +118,49 @@ function yearRange(): number[] {
 
 // Deterministic sample inventory for demos / offline dev / when Tesla's
 // undocumented API bot-blocks (HTTP 403). Enable with TESLA_MOCK=1.
+// Lease/Loan monthly figures mirror Tesla's advertised-style payments so the
+// sample experience reflects realistic numbers (not raw $0-down estimates).
 function mockInventory(model: TeslaModelCode): RawListing[] {
+  const year = new Date().getFullYear();
   const base: Record<TeslaModelCode, RawListing[]> = {
     m3: [
-      { VIN: "MOCK3RWD0001", TrimName: "Rear-Wheel Drive", InventoryPrice: 38990 },
-      { VIN: "MOCK3LR00002", TrimName: "Long Range AWD", InventoryPrice: 45990 },
+      { VIN: "5YJ3E1EA1RF000001", TrimName: "Rear-Wheel Drive", InventoryPrice: 38990, LeaseMonthly: 329, LoanMonthly: 559, Year: year, RangeMi: 272 },
+      { VIN: "5YJ3E1EB6RF000002", TrimName: "Long Range AWD", InventoryPrice: 45990, LeaseMonthly: 389, LoanMonthly: 659, Year: year, RangeMi: 363 },
     ],
     my: [
-      { VIN: "MOCKYRWD0001", TrimName: "Rear-Wheel Drive", InventoryPrice: 44990 },
-      { VIN: "MOCKYLR00002", TrimName: "Long Range AWD", InventoryPrice: 50490 },
+      { VIN: "7SAYGDEE7RF000001", TrimName: "Rear-Wheel Drive", InventoryPrice: 44990, LeaseMonthly: 399, LoanMonthly: 645, Year: year, RangeMi: 260 },
+      { VIN: "7SAYGDEF1RF000002", TrimName: "Long Range AWD", InventoryPrice: 50490, LeaseMonthly: 449, LoanMonthly: 725, Year: year, RangeMi: 320 },
     ],
-    ms: [{ VIN: "MOCKS000001", TrimName: "All-Wheel Drive", InventoryPrice: 74990 }],
-    mx: [{ VIN: "MOCKX000001", TrimName: "All-Wheel Drive", InventoryPrice: 79990 }],
+    ms: [{ VIN: "5YJSA1E20RF000001", TrimName: "All-Wheel Drive", InventoryPrice: 74990, LeaseMonthly: 999, LoanMonthly: 1075, Year: year, RangeMi: 405 }],
+    mx: [{ VIN: "7SAXCBE60RF000001", TrimName: "All-Wheel Drive", InventoryPrice: 79990, LeaseMonthly: 1099, LoanMonthly: 1149, Year: year, RangeMi: 335 }],
   };
   return base[model];
+}
+
+// Pull a real monthly payment from a Tesla listing if it exposes one for this
+// financing type, so we match on the actual quote rather than an estimate.
+function realMonthly(listing: RawListing, financing?: Financing): number | null {
+  if (financing === "cash") return null;
+  const want = financing === "loan" ? "loan" : "lease";
+  // Explicit fields used by our sample data + likely live field names.
+  const direct =
+    want === "lease"
+      ? listing.LeaseMonthly ?? listing.LeasePayment
+      : listing.LoanMonthly ?? listing.LoanPayment;
+  if (typeof direct === "number" && direct > 50 && direct < 5000) return direct;
+  // Heuristic scan for live responses with differently-named fields.
+  for (const [k, v] of Object.entries(listing)) {
+    if (
+      typeof v === "number" &&
+      v > 50 &&
+      v < 5000 &&
+      new RegExp(want, "i").test(k) &&
+      /(monthly|payment|month)/i.test(k)
+    ) {
+      return v;
+    }
+  }
+  return null;
 }
 
 // Optional egress proxy so live Tesla requests can originate from a residential
@@ -278,16 +307,18 @@ function scoreListing(
   const price = listingPrice(listing);
   const vin = listing.VIN || "UNKNOWN";
   const trimName = listing.TrimName || "";
+  const num = (v: unknown): number | undefined => (typeof v === "number" ? v : undefined);
 
-  let estimatedMonthly: number | null = null;
-  if (search.financing === "lease") {
-    estimatedMonthly = estimateMonthlyLease(price, {
-      downPayment: search.maxDownPayment ?? 0,
-    });
-  } else if (search.financing === "loan") {
-    estimatedMonthly = estimateMonthlyLoan(price, {
-      downPayment: search.maxDownPayment ?? 0,
-    });
+  // Prefer Tesla's real monthly quote; fall back to an estimate.
+  const real = realMonthly(listing, search.financing);
+  let estimatedMonthly: number | null = real;
+  const monthlyIsReal = real != null;
+  if (estimatedMonthly == null) {
+    if (search.financing === "lease") {
+      estimatedMonthly = estimateMonthlyLease(price, { downPayment: search.maxDownPayment ?? 0 });
+    } else if (search.financing === "loan") {
+      estimatedMonthly = estimateMonthlyLoan(price, { downPayment: search.maxDownPayment ?? 0 });
+    }
   }
 
   const checks: { ok: boolean; weight: number; label: string }[] = [];
@@ -330,6 +361,10 @@ function scoreListing(
     trimName,
     price,
     estimatedMonthly,
+    monthlyIsReal,
+    year: num(listing.Year),
+    odometer: num(listing.Odometer),
+    rangeMi: num(listing.RangeMi),
     score,
     isMatch,
     // For sample data, link to the real inventory page (the VIN isn't real).
