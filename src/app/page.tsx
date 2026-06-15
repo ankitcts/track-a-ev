@@ -149,6 +149,7 @@ export default function AssistantPage() {
 
   async function parseRemote(transcript: string): Promise<ParsedCriteria> {
     setThinking(true);
+    setAvatarState("thinking");
     try {
       const res = await fetch("/api/parse", {
         method: "POST",
@@ -275,6 +276,7 @@ export default function AssistantPage() {
 
   async function evaluate(c: ParsedCriteria) {
     setError(null);
+    setAvatarState("thinking");
     try {
       const res = await fetch("/api/searches", {
         method: "POST",
