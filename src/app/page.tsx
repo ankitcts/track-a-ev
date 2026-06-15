@@ -1,13 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
 import Avatar, { type AvatarState } from "@/components/Avatar";
 import { getRecognition, speak } from "@/lib/speech";
 import {
   MODEL_LABELS,
+  type MatchRecord,
   type NotifyChannel,
   type ParsedCriteria,
+  type TrackedSearch,
 } from "@/lib/types";
 
 const EXAMPLES = [
@@ -23,7 +25,6 @@ const ALL_CHANNELS: { id: NotifyChannel; label: string }[] = [
 ];
 
 export default function AssistantPage() {
-  const router = useRouter();
   const [text, setText] = useState("");
   const [avatarState, setAvatarState] = useState<AvatarState>("idle");
   const [listening, setListening] = useState(false);
@@ -33,6 +34,7 @@ export default function AssistantPage() {
   const [channels, setChannels] = useState<NotifyChannel[]>(["email", "browser"]);
   const [error, setError] = useState<string | null>(null);
   const [micSupported, setMicSupported] = useState(true);
+  const [result, setResult] = useState<TrackedSearch | null>(null);
   const recRef = useRef<ReturnType<typeof getRecognition>>(null);
 
   useEffect(() => {
@@ -100,18 +102,43 @@ export default function AssistantPage() {
     setSaving(true);
     setError(null);
     try {
+      // Creating the search also runs an immediate evaluation, so the response
+      // already carries the best available result.
       const res = await fetch("/api/searches", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...criteria, rawText: text.trim(), channels }),
       });
-      const data = await res.json();
+      const data = (await res.json()) as TrackedSearch & { error?: string };
       if (!res.ok) throw new Error(data.error || "Could not save");
-      router.push("/dashboard");
+      setResult(data);
+      setCriteria(null);
+      speak(
+        spokenResult(data),
+        () => setAvatarState("speaking"),
+        () => setAvatarState("idle")
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not save");
+    } finally {
       setSaving(false);
     }
+  }
+
+  async function approve(searchId: string, vin: string) {
+    const res = await fetch("/api/approve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ searchId, vin }),
+    });
+    const data = await res.json();
+    if (res.ok && data.orderUrl) window.open(data.orderUrl, "_blank", "noopener");
+  }
+
+  function reset() {
+    setResult(null);
+    setCriteria(null);
+    setText("");
   }
 
   function toggleChannel(c: NotifyChannel) {
@@ -123,14 +150,15 @@ export default function AssistantPage() {
   return (
     <div className="flex flex-col items-center gap-8">
       <div className="flex flex-col items-center gap-3 text-center">
-        <Avatar state={avatarState} />
+        <Avatar state={avatarState} onClick={toggleListening} />
         <h1 className="text-2xl font-semibold">Tell me what Tesla you want</h1>
         <p className="max-w-xl text-sm text-white/60">
-          Talk or type your criteria. I&apos;ll check Tesla inventory every hour
-          and ping you to approve the buy the moment a match shows up.
+          Tap the avatar (or the mic) and talk, or type your criteria. I&apos;ll
+          find the best match now and keep checking inventory every hour.
         </p>
       </div>
 
+      {!result && (
       <div className="card w-full max-w-2xl p-5">
         <div className="flex items-start gap-3">
           <textarea
@@ -181,6 +209,11 @@ export default function AssistantPage() {
           ))}
         </div>
       </div>
+      )}
+
+      {result && (
+        <ResultCard search={result} onApprove={approve} onReset={reset} />
+      )}
 
       {error && (
         <div className="w-full max-w-2xl rounded-xl border border-red-400/30 bg-red-500/10 p-3 text-sm text-red-200">
@@ -266,6 +299,103 @@ function Detail({ label, value }: { label: string; value: string }) {
     <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
       <div className="text-[11px] uppercase tracking-wider text-white/40">{label}</div>
       <div className="text-sm capitalize">{value}</div>
+    </div>
+  );
+}
+
+// What the avatar says aloud after a search runs.
+function spokenResult(search: TrackedSearch): string {
+  const m = search.closestMatch;
+  if (!m) {
+    if (search.lastStatus === "error")
+      return "I saved your search, but couldn't reach Tesla inventory right now. I'll keep checking every hour and alert you when something matches.";
+    return "I saved your search. Nothing matches in inventory yet, but I'll keep checking every hour and alert you the moment one shows up.";
+  }
+  if (m.isMatch)
+    return `Good news — I found a match: a ${MODEL_LABELS[m.model]} for $${m.price.toLocaleString()}. Review it below and approve to buy. I'll keep checking for more.`;
+  return `The closest I found right now is a ${MODEL_LABELS[m.model]} at $${m.price.toLocaleString()}, but it ${m.reason.toLowerCase()}. I'll keep checking every hour and alert you when one fully matches.`;
+}
+
+function ResultCard({
+  search,
+  onApprove,
+  onReset,
+}: {
+  search: TrackedSearch;
+  onApprove: (searchId: string, vin: string) => void;
+  onReset: () => void;
+}) {
+  const m: MatchRecord | undefined = search.closestMatch;
+  return (
+    <div className="card w-full max-w-2xl p-5">
+      <div className="mb-3 flex items-center gap-2">
+        <span className="rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-xs text-emerald-200">
+          Saved · checking hourly
+        </span>
+        <span className="text-xs text-white/40">
+          {search.lastInventoryCount ?? 0} vehicles scanned just now
+        </span>
+      </div>
+
+      <h2 className="text-lg font-semibold">
+        {m ? (m.isMatch ? "Best match right now" : "Closest right now") : "No results yet"}
+      </h2>
+
+      {m ? (
+        <div
+          className={`mt-3 rounded-xl border p-4 ${
+            m.isMatch
+              ? "border-emerald-400/30 bg-emerald-500/5"
+              : "border-white/10 bg-black/20"
+          }`}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="text-base font-medium">
+                {MODEL_LABELS[m.model]} {m.trimName}
+              </div>
+              <div className="mt-1 text-sm text-white/60">
+                ${m.price.toLocaleString()}
+                {m.estimatedMonthly != null && <> · ~${m.estimatedMonthly}/mo (est.)</>}
+              </div>
+              <div className="mt-1 text-xs text-white/40">{m.reason}</div>
+            </div>
+            <div className="flex items-center gap-2">
+              <a
+                href={m.orderUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn-ghost px-3 py-1.5 text-sm"
+              >
+                View on Tesla
+              </a>
+              {m.isMatch && (
+                <button
+                  onClick={() => onApprove(search.id, m.vin)}
+                  className="btn-primary px-3 py-1.5 text-sm"
+                >
+                  Approve &amp; buy
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <p className="mt-2 text-sm text-white/60">
+          {search.lastStatus === "error"
+            ? "Couldn't reach Tesla inventory just now — I'll keep retrying every hour."
+            : "Nothing in inventory matches yet. I'll keep checking every hour."}
+        </p>
+      )}
+
+      <div className="mt-5 flex gap-2">
+        <Link href="/dashboard" className="btn-primary">
+          View dashboard
+        </Link>
+        <button onClick={onReset} className="btn-ghost">
+          New search
+        </button>
+      </div>
     </div>
   );
 }

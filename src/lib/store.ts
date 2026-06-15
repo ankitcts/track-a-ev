@@ -1,22 +1,58 @@
-// File-backed JSON store for tracked searches.
+// Persistent store for tracked searches.
 //
-// This is deliberately simple so the app runs with zero external services.
-// NOTE: Vercel's serverless filesystem is ephemeral and not shared between
-// invocations — for production, replace the read()/write() bodies with Vercel
-// KV, Postgres, Redis, etc. The rest of the app only depends on the exported
-// functions below, so swapping the backend is a localized change.
+// Two backends, chosen automatically:
+//   1. Vercel KV / Upstash Redis (REST) — used when KV_REST_API_URL and
+//      KV_REST_API_TOKEN are set. This survives across serverless invocations,
+//      so saved searches persist on refresh in production.
+//   2. Local JSON file — the zero-config default for dev. NOTE: Vercel's
+//      serverless filesystem is ephemeral, so this does NOT persist there;
+//      connect a KV store (one click in the Vercel dashboard) for production.
+//
+// The rest of the app only depends on the exported functions below, so the
+// backend is fully encapsulated here.
 
 import { promises as fs } from "fs";
 import path from "path";
 import crypto from "crypto";
 import type { TrackedSearch } from "./types";
 
+const KV_URL = process.env.KV_REST_API_URL;
+const KV_TOKEN = process.env.KV_REST_API_TOKEN;
+const KV_KEY = process.env.KV_STORE_KEY || "track-a-ev:searches";
+const useKv = !!(KV_URL && KV_TOKEN);
+
 const DATA_FILE = path.resolve(
   process.cwd(),
   process.env.DATA_FILE || ".data/searches.json"
 );
 
+// --- Upstash/Vercel KV REST helpers ---
+async function kvCommand<T>(command: unknown[]): Promise<T> {
+  const res = await fetch(KV_URL as string, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${KV_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(command),
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`KV ${command[0]} failed: ${res.status}`);
+  const data = (await res.json()) as { result: T };
+  return data.result;
+}
+
 async function read(): Promise<TrackedSearch[]> {
+  if (useKv) {
+    const raw = await kvCommand<string | null>(["GET", KV_KEY]);
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? (parsed as TrackedSearch[]) : [];
+    } catch {
+      return [];
+    }
+  }
   try {
     const raw = await fs.readFile(DATA_FILE, "utf8");
     const parsed = JSON.parse(raw);
@@ -28,6 +64,10 @@ async function read(): Promise<TrackedSearch[]> {
 }
 
 async function write(searches: TrackedSearch[]): Promise<void> {
+  if (useKv) {
+    await kvCommand(["SET", KV_KEY, JSON.stringify(searches)]);
+    return;
+  }
   await fs.mkdir(path.dirname(DATA_FILE), { recursive: true });
   await fs.writeFile(DATA_FILE, JSON.stringify(searches, null, 2), "utf8");
 }

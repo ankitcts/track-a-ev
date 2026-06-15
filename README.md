@@ -95,11 +95,18 @@ once-per-day crons**. To check **hourly** (the product's intent), either:
 The polling logic is identical regardless of what triggers it; the dashboard
 "Check now" button (POST `/api/poll`) also runs a cycle on demand.
 
-> **Production note:** the default store writes to the local filesystem, which
-> is **ephemeral on Vercel** and not shared between invocations. For a real
-> deployment, replace the `read()`/`write()` bodies in `src/lib/store.ts` with
-> Vercel KV / Postgres / Redis — the rest of the app only depends on the
-> exported store functions.
+### Persistence
+
+Tracked searches are saved so they're still there when you refresh. The store
+(`src/lib/store.ts`) picks a backend automatically:
+
+- **Vercel KV / Upstash Redis** when `KV_REST_API_URL` + `KV_REST_API_TOKEN`
+  are set — **this is what makes searches persist in production.** Connect a KV
+  store from the Vercel dashboard (Storage tab) and redeploy; Vercel injects
+  those env vars for you.
+- **Local JSON file** otherwise (great for dev). ⚠️ Vercel's filesystem is
+  **ephemeral**, so without a KV store, searches won't survive on the deployed
+  app — connect KV for production.
 
 ## Notes & limitations
 

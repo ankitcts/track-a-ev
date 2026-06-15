@@ -9,15 +9,34 @@ export type AvatarState = "idle" | "listening" | "speaking";
 export default function Avatar({
   state = "idle",
   size = 160,
+  onClick,
 }: {
   state?: AvatarState;
   size?: number;
+  onClick?: () => void;
 }) {
+  const interactive = !!onClick;
   return (
     <div
-      className="relative grid place-items-center"
+      className={`relative grid place-items-center ${
+        interactive ? "cursor-pointer select-none transition hover:scale-105 active:scale-95" : ""
+      }`}
       style={{ width: size, height: size }}
       aria-label={`Assistant ${state}`}
+      role={interactive ? "button" : undefined}
+      tabIndex={interactive ? 0 : undefined}
+      title={interactive ? "Tap to talk to me" : undefined}
+      onClick={onClick}
+      onKeyDown={
+        interactive
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onClick?.();
+              }
+            }
+          : undefined
+      }
     >
       {state === "listening" && (
         <>

@@ -1,8 +1,17 @@
 import { NextResponse } from "next/server";
 import { createSearch, listSearches } from "@/lib/store";
+import { pollSearchById } from "@/lib/runPoll";
 import type { NotifyChannel, TrackedSearch } from "@/lib/types";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
+
+function baseUrlFrom(req: Request): string {
+  const env = process.env.NEXT_PUBLIC_BASE_URL || process.env.VERCEL_URL;
+  if (env) return env.startsWith("http") ? env : `https://${env}`;
+  const url = new URL(req.url);
+  return `${url.protocol}//${url.host}`;
+}
 
 // GET /api/searches -> TrackedSearch[]
 export async function GET() {
@@ -35,7 +44,11 @@ export async function POST(req: Request) {
       radius: body.radius,
       channels,
     });
-    return NextResponse.json(search, { status: 201 });
+
+    // Run an immediate evaluation so the user sees the best available result
+    // right away ("show best result now"); the hourly cron keeps checking after.
+    const evaluated = await pollSearchById(search.id, baseUrlFrom(req));
+    return NextResponse.json(evaluated ?? search, { status: 201 });
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "create failed" },
