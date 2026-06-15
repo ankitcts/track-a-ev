@@ -12,6 +12,7 @@
 // backend is fully encapsulated here.
 
 import { promises as fs } from "fs";
+import os from "os";
 import path from "path";
 import crypto from "crypto";
 import type { TrackedSearch } from "./types";
@@ -21,10 +22,18 @@ const KV_TOKEN = process.env.KV_REST_API_TOKEN;
 const KV_KEY = process.env.KV_STORE_KEY || "track-a-ev:searches";
 const useKv = !!(KV_URL && KV_TOKEN);
 
-const DATA_FILE = path.resolve(
-  process.cwd(),
-  process.env.DATA_FILE || ".data/searches.json"
-);
+// Resolve a WRITABLE path for the file fallback. Vercel's app dir (/var/task)
+// is read-only, so on serverless we must use the OS temp dir. This fallback is
+// ephemeral — configure KV for real persistence.
+function resolveDataFile(): string {
+  if (process.env.DATA_FILE) return path.resolve(process.cwd(), process.env.DATA_FILE);
+  if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+    return path.join(os.tmpdir(), "track-a-ev-searches.json");
+  }
+  return path.resolve(process.cwd(), ".data/searches.json");
+}
+
+const DATA_FILE = resolveDataFile();
 
 // --- Upstash/Vercel KV REST helpers ---
 async function kvCommand<T>(command: unknown[]): Promise<T> {
@@ -68,8 +77,14 @@ async function write(searches: TrackedSearch[]): Promise<void> {
     await kvCommand(["SET", KV_KEY, JSON.stringify(searches)]);
     return;
   }
-  await fs.mkdir(path.dirname(DATA_FILE), { recursive: true });
-  await fs.writeFile(DATA_FILE, JSON.stringify(searches, null, 2), "utf8");
+  try {
+    await fs.mkdir(path.dirname(DATA_FILE), { recursive: true });
+    await fs.writeFile(DATA_FILE, JSON.stringify(searches, null, 2), "utf8");
+  } catch (err) {
+    // Never crash a request because the ephemeral file store couldn't persist.
+    // (Configure KV_REST_API_* for durable, writable storage.)
+    console.warn(`[store] file write failed (${DATA_FILE}); data not persisted:`, err);
+  }
 }
 
 export async function listSearches(): Promise<TrackedSearch[]> {
