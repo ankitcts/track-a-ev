@@ -43,6 +43,7 @@ export async function pollSearch(
       lastStatus: result.status,
       lastError: result.error,
       lastInventoryCount: result.inventoryCount,
+      lastSample: result.sample,
       closestMatch: result.closest,
       matches: mergedMatches,
       notifiedVins,

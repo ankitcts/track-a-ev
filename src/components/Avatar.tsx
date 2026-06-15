@@ -1,14 +1,24 @@
 "use client";
 
-// A lightweight, dependency-free animated avatar. It reacts to three states:
-//  - "idle":      gentle float
-//  - "listening": pulsing rings around it (mic is active)
-//  - "speaking":  animated mouth bars (assistant is talking / reading back)
-export type AvatarState = "idle" | "listening" | "speaking";
+import dynamic from "next/dynamic";
+
+// Public avatar API (unchanged so callers don't need edits). The visual is a
+// full 3D Tesla-bot rendered with three.js / React-Three-Fiber, loaded
+// client-only (WebGL can't run during SSR).
+export type AvatarState = "idle" | "listening" | "thinking" | "speaking";
+
+const RobotScene = dynamic(() => import("./RobotScene"), {
+  ssr: false,
+  loading: () => (
+    <div className="grid h-full w-full place-items-center">
+      <div className="h-10 w-10 animate-spin rounded-full border-2 border-white/20 border-t-sky-400" />
+    </div>
+  ),
+});
 
 export default function Avatar({
   state = "idle",
-  size = 160,
+  size = 230,
   onClick,
 }: {
   state?: AvatarState;
@@ -18,13 +28,11 @@ export default function Avatar({
   const interactive = !!onClick;
   return (
     <div
-      className={`relative grid place-items-center ${
-        interactive ? "cursor-pointer select-none transition hover:scale-105 active:scale-95" : ""
-      }`}
-      style={{ width: size, height: size }}
-      aria-label={`Assistant ${state}`}
+      className={`relative ${interactive ? "cursor-pointer select-none" : ""}`}
+      style={{ width: size, height: size * 1.25 }}
       role={interactive ? "button" : undefined}
       tabIndex={interactive ? 0 : undefined}
+      aria-label={`Assistant ${state}`}
       title={interactive ? "Tap to talk to me" : undefined}
       onClick={onClick}
       onKeyDown={
@@ -38,51 +46,9 @@ export default function Avatar({
           : undefined
       }
     >
-      {state === "listening" && (
-        <>
-          <span className="absolute inset-0 rounded-full border border-sky-400/50 animate-pulseRing" />
-          <span
-            className="absolute inset-0 rounded-full border border-sky-400/40 animate-pulseRing"
-            style={{ animationDelay: "0.5s" }}
-          />
-        </>
-      )}
-
-      <div
-        className={`relative grid h-full w-full place-items-center rounded-full bg-gradient-to-b from-sky-400/30 to-indigo-500/20 ring-1 ring-white/15 ${
-          state === "idle" ? "animate-float" : ""
-        }`}
-      >
-        {/* face */}
-        <div className="flex flex-col items-center gap-3">
-          {/* eyes */}
-          <div className="flex gap-5">
-            <span className="h-3 w-3 rounded-full bg-white/90" />
-            <span className="h-3 w-3 rounded-full bg-white/90" />
-          </div>
-          {/* mouth: bars animate while speaking, otherwise a calm line */}
-          {state === "speaking" ? (
-            <div className="flex h-6 items-end gap-1">
-              {[0, 1, 2, 3, 4].map((i) => (
-                <span
-                  key={i}
-                  className="w-1.5 origin-bottom rounded-full bg-white/90 animate-talk"
-                  style={{ height: 22, animationDelay: `${i * 0.08}s` }}
-                />
-              ))}
-            </div>
-          ) : (
-            <span
-              className={`h-1.5 rounded-full bg-white/80 transition-all ${
-                state === "listening" ? "w-10" : "w-8"
-              }`}
-            />
-          )}
-        </div>
-      </div>
-
-      <span className="absolute -bottom-1 rounded-full bg-black/40 px-2 py-0.5 text-[10px] uppercase tracking-wider text-white/70">
-        {state}
+      <RobotScene state={state} />
+      <span className="pointer-events-none absolute bottom-1 left-1/2 -translate-x-1/2 rounded-full bg-black/50 px-2 py-0.5 text-[10px] uppercase tracking-wider text-white/70">
+        {state === "idle" ? "tap to talk" : state}
       </span>
     </div>
   );

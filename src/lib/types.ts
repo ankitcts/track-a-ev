@@ -45,6 +45,8 @@ export interface MatchRecord {
   orderUrl: string;
   // Short human-readable reason the listing did / didn't qualify.
   reason: string;
+  // True when this is illustrative sample data (Tesla API was unreachable).
+  sample?: boolean;
   foundAt: string;
 }
 
@@ -71,6 +73,8 @@ export interface TrackedSearch {
   lastStatus?: "ok" | "error" | "no-results";
   lastError?: string;
   lastInventoryCount?: number;
+  // True when the latest results were sample data (Tesla unreachable).
+  lastSample?: boolean;
   // Best listing seen on the most recent fetch (match or near-miss).
   closestMatch?: MatchRecord;
   // Confirmed matches awaiting / past approval.

@@ -199,7 +199,13 @@ function SearchCard({
         <Stat label="Inventory seen" value={String(search.lastInventoryCount ?? "—")} />
         <Stat label="Matches" value={String(matches.length)} />
       </div>
-      {search.lastError && (
+      {search.lastSample && (
+        <p className="mt-2 text-xs text-amber-300/80">
+          Showing sample data — Tesla inventory couldn&apos;t be reached from the server (it blocks
+          datacenter IPs). Runs from a residential IP or with a configured proxy will use live data.
+        </p>
+      )}
+      {search.lastError && !search.lastSample && (
         <p className="mt-2 text-xs text-red-300/80">Last error: {search.lastError}</p>
       )}
 
