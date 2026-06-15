@@ -78,8 +78,22 @@ All env vars are **optional** — each unset integration degrades gracefully
 
 ## Deployment (Vercel)
 
-`vercel.json` registers an hourly cron hitting `/api/poll`. Set `CRON_SECRET`
+`vercel.json` registers a **daily** cron hitting `/api/poll`. Set `CRON_SECRET`
 (and any notification keys) in the Vercel project settings.
+
+### Polling frequency
+
+The Vercel cron is **daily** because Vercel's **Hobby plan only allows
+once-per-day crons**. To check **hourly** (the product's intent), either:
+
+1. **Upgrade the Vercel project to Pro** and change the schedule in
+   `vercel.json` to `0 * * * *`, or
+2. **Point a free external scheduler** (e.g. [cron-job.org](https://cron-job.org),
+   UptimeRobot) at `https://<your-app>/api/poll` every hour. Send
+   `Authorization: Bearer <CRON_SECRET>` if you set `CRON_SECRET`.
+
+The polling logic is identical regardless of what triggers it; the dashboard
+"Check now" button (POST `/api/poll`) also runs a cycle on demand.
 
 > **Production note:** the default store writes to the local filesystem, which
 > is **ephemeral on Vercel** and not shared between invocations. For a real
